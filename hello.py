@@ -1,1 +1,4 @@
-print("helloworld")
+print("helloworld");
+a = input("enter a number :-");
+print(a);
+
