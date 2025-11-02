@@ -1,0 +1,18 @@
+2025-11-02 20:35:33,510 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 184, in _open_theme_editor
+    dlg = ThemeEditor(theme, self)
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\theme_editor.py", line 26, in __init__
+    "bg": theme.bg,
+          ^^^^^^^^
+AttributeError: 'Theme' object has no attribute 'bg'
+2025-11-02 21:11:38,370 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 224, in _open_session
+    text = self._assemble_text(cfg["source"])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 294, in _assemble_text
+    return self._filter(text, inc_punc, inc_nums)
+                              ^^^^^^^^
+NameError: name 'inc_punc' is not defined

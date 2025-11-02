@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon   # <-- already imported, needed for logo
 
 from ui.main_window import MainWindow
 
@@ -20,16 +21,12 @@ def setup_logging() -> None:
         ],
     )
 
-    # Log any uncaught exceptions rather than silently dying
     def excepthook(exctype, value, tb):
         logging.exception("Unhandled exception", exc_info=(exctype, value, tb))
         try:
-            QMessageBox.critical(
-                None, "Application Error", f"{exctype.__name__}: {value}"
-            )
+            QMessageBox.critical(None, "Application Error", f"{exctype.__name__}: {value}")
         except Exception:
             pass
-        # exit with non-zero so run scripts don’t think it succeeded
         sys.exit(1)
 
     sys.excepthook = excepthook
@@ -47,22 +44,18 @@ def load_stylesheet(app: QApplication) -> None:
 def main() -> int:
     setup_logging()
 
-    # Create the application
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Typemaster")
     app.setOrganizationName("Typemaster")
 
-    # High-DPI for better text rendering
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # ✅ Set Application + Window Icon
+    app.setWindowIcon(QIcon("assets/logo.png"))
 
-    # Optional stylesheet
     load_stylesheet(app)
 
-    # Create and show the main window
     win = MainWindow()
-    win.show()  # <- ensure the window is shown
+    win.show()
 
-    # Start the event loop
     return app.exec()
 
 

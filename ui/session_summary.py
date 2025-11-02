@@ -27,7 +27,7 @@ class SessionSummary(QDialog):
         root.addWidget(QLabel(f"Accuracy: {acc:.1f}%"))
         root.addWidget(QLabel(f"Time: {secs:.1f}s"))
 
-        # Static plot (no live updates)
+        # --- Plot (smooth continuous line, no scatter) ---
         plot = pg.PlotWidget()
         plot.setBackground(None)
         plot.setMenuEnabled(False)
@@ -35,7 +35,15 @@ class SessionSummary(QDialog):
         plot.hideButtons()
         plot.showGrid(x=False, y=True, alpha=0.08)
         plot.setLabel("left", "WPM")
-        curve = plot.plot(times, wpms, pen=None, symbol="o", symbolSize=4)
+
+        # Smooth line
+        plot.plot(
+            times,
+            wpms,
+            pen=pg.mkPen(color=(200, 200, 255), width=2),
+            symbol=None
+        )
+
         root.addWidget(plot, stretch=1)
 
         btn = QPushButton("OK", self)

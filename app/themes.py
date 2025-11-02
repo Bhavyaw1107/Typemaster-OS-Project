@@ -15,23 +15,45 @@ class Theme:
     accent: str
 
 
-# -------- Built-in themes --------
+# -------- Built-in themes (6) --------
 THEMES: List[Theme] = [
-    Theme(
-        name="Monkeytype Dark",
-        background="#0f1115",
-        primary="#e5e7eb",
-        secondary="#6b7280",
-        accent="#eab308",
+    Theme(  # warm yellow on charcoal (Monkeytype "Serika"-style)
+        name="Serika Dark",
+        background="#0b0f14",
+        primary="#e6e6e6",
+        secondary="#9aa1a9",
+        accent="#f5d061",
     ),
-    Theme(
-        name="Monkeytype Light",
-        background="#fafafa",
-        primary="#111111",
-        secondary="#6b6b6b",
-        accent="#eab308",
+    Theme(  # Dracula palette
+        name="Dracula",
+        background="#282a36",
+        primary="#f8f8f2",
+        secondary="#6272a4",
+        accent="#bd93f9",
     ),
-    Theme(
+    Theme(  # One Dark
+        name="One Dark",
+        background="#1e2127",
+        primary="#e6e6e6",
+        secondary="#7f848e",
+        accent="#e5c07b",
+    ),
+    Theme(  # Catppuccin Mocha aesthetic theme
+        name="Catppuccin Mocha",
+        background="#1e1e2e",
+        primary="#cdd6f4",     
+        secondary="#a6adc8",   
+        accent="#f5e0dc",      
+    ),
+
+    Theme(  # Tokyo Night
+        name="Tokyo Night",
+        background="#1a1b26",
+        primary="#c0caf5",
+        secondary="#7aa2f7",
+        accent="#ff9e64",
+    ),
+    Theme(  # Nord (keep a cool option)
         name="Nord",
         background="#2e3440",
         primary="#eceff4",
@@ -40,8 +62,11 @@ THEMES: List[Theme] = [
     ),
 ]
 
+# set which theme loads first (0 = Serika Dark)
 DEFAULT_THEME_INDEX = 0
+
 _CUSTOM_FILE = Path("themes.json")
+_BUILTIN_COUNT = len(THEMES)
 
 
 # -------- helpers --------
@@ -60,6 +85,7 @@ def _theme_from_dict(d: Dict[str, Any]) -> Theme:
 
 
 def _save_custom_themes(extra: List[Theme]) -> None:
+    """Persist only custom themes (not the built-ins) to themes.json."""
     try:
         payload = [
             {
@@ -75,7 +101,8 @@ def _save_custom_themes(extra: List[Theme]) -> None:
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:
-        pass  # never crash on save
+        # Never crash on save; silently ignore I/O errors.
+        pass
 
 
 # -------- public API used by UI --------
@@ -92,22 +119,19 @@ def load_custom_themes() -> None:
                 except Exception:
                     continue
     except Exception:
+        # Ignore malformed file
         pass
 
 
 def add_runtime_theme_from_dict(d: Dict[str, Any]) -> int:
     """
-    Expected by ui/theme_editor.py.
-    - Validates dict
-    - Appends to THEMES
-    - Persists to themes.json (custom themes only)
-    - Returns index of the new theme
+    Append a theme at runtime and persist it to themes.json (customs only).
+    Returns the index of the new theme.
     """
     theme = _theme_from_dict(d)
     THEMES.append(theme)
 
-    # First N entries are built-ins; persist only customs
-    builtin_count = 3  # keep in sync with built-in list above
-    custom = THEMES[builtin_count:]
+    # Persist only customs (everything after the built-ins)
+    custom = THEMES[_BUILTIN_COUNT:]
     _save_custom_themes(custom)
     return len(THEMES) - 1
