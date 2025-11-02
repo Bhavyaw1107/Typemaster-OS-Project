@@ -1,73 +1,98 @@
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QFont, QColor, QPen
-from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtCore import Qt, QTimer, QRectF
 
 class TypingArea(QWidget):
     """
-    Visual-only widget:
-    - Shows target text with per-character colors (correct/error/pending).
-    - Blinking caret at current position.
-    Parent (TestUI) handles key input and state; this just paints.
+    High-performance renderer for "words mode":
+    - Fixed line width for comfortable reading (~70–80 chars).
+    - Per-char coloring:
+        pending -> muted grey
+        correct -> theme.correct
+        wrong   -> theme.error
+    - Blinking caret at current index.
+    Parent handles all key logic & state; this class only paints `state.target_text`,
+    using `state.position` and `state.keystrokes`.
     """
+
     def __init__(self, get_state_fn, get_theme_fn, parent=None):
         super().__init__(parent)
         self.get_state = get_state_fn
         self.get_theme = get_theme_fn
         self.setFocusPolicy(Qt.StrongFocus)
-        self._font = QFont("Inter, Segoe UI, Roboto, Arial", 24)
-        self._line_wrap = 900  # px
+
+        # Visuals tuned for readability like monkeytype
+        self._font = QFont("Inter, Segoe UI, Roboto, Arial", 28)
+        self._line_wrap_px = 1000  # target line width for wrapping
+        self._line_height = 52
+
+        # Caret blink
         self._blink = True
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._toggle_blink)
-        self._timer.start(550)
+        self._timer.start(500)
+
+        # padding
+        self._pad_x = 32
+        self._pad_y = 32
 
     def _toggle_blink(self):
         self._blink = not self._blink
         self.update()
 
     def paintEvent(self, e):
-        painter = QPainter(self)
+        s = self.get_state()
         theme = self.get_theme()
-        st = self.get_state()
 
-        painter.fillRect(self.rect(), QColor(theme.surface))
-        painter.setFont(self._font)
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(theme.surface))
+        p.setFont(self._font)
+        fm = p.fontMetrics()
 
-        x, y = 24, 48
-        lh = 44
-        fm = painter.fontMetrics()
+        # center panel look
+        panel_rect = self.rect().adjusted(self._pad_x, self._pad_y, -self._pad_x, -self._pad_y)
+        # limit width for readability
+        max_w = min(self._line_wrap_px, panel_rect.width())
+        left = panel_rect.center().x() - max_w/2
+        x = left
+        y = panel_rect.top() + self._line_height
+
         wchar = fm.horizontalAdvance("M")
-        h = fm.height()
-        pos = st.position
 
-        def draw_char(ch, idx, rect):
-            if idx < len(st.keystrokes):
-                ok = st.keystrokes[idx].correct
-                painter.setPen(QColor(theme.correct if ok else theme.error))
-            elif idx == pos and self._blink:
-                painter.setPen(QColor(theme.caret))
-            elif idx < pos:
-                painter.setPen(QColor(theme.correct))
+        # quick helpers
+        def draw_char(ch_i: int, ch: str):
+            nonlocal x, y
+            if ch == '\n' or x + wchar > left + max_w:
+                x = left
+                y += self._line_height
+
+            # color by state
+            if ch_i < len(s.keystrokes):
+                ok = s.keystrokes[ch_i].correct
+                p.setPen(QColor(theme.correct if ok else theme.error))
+            elif ch_i == s.position and self._blink:
+                p.setPen(QColor(theme.caret))
+            elif ch_i < s.position:
+                p.setPen(QColor(theme.correct))
             else:
-                painter.setPen(QColor(theme.text_muted))
+                p.setPen(QColor(theme.text_muted))
 
-            painter.drawText(rect.left(), rect.top(), rect.width(), rect.height(),
-                             Qt.AlignLeft | Qt.AlignVCenter, ch)
+            p.drawText(QRectF(x, y - self._line_height + 6, wchar + 2, self._line_height),
+                       Qt.AlignLeft | Qt.AlignVCenter, ch if ch != '\n' else " ")
 
-            if idx < len(st.keystrokes) and not st.keystrokes[idx].correct:
-                pen = QPen(QColor(theme.error))
-                pen.setWidth(2)
-                painter.setPen(pen)
-                painter.drawLine(rect.left(), rect.bottom()-6, rect.left()+12, rect.bottom()-6)
+            # underline for wrong chars
+            if ch_i < len(s.keystrokes) and not s.keystrokes[ch_i].correct:
+                pen = QPen(QColor(theme.error)); pen.setWidth(2)
+                p.setPen(pen)
+                p.drawLine(x, y - 6, x + wchar - 6, y - 6)
 
-        for i, ch in enumerate(st.target_text):
-            if ch == '\n' or x + wchar > self._line_wrap:
-                x = 24
-                y += lh
-            rect = QRect(x, y-h, wchar+2, lh)
-            draw_char(ch, i, rect)
             x += wchar
 
-        if pos >= len(st.target_text) and self._blink:
-            painter.setPen(QColor(theme.caret))
-            painter.drawText(x, y, "|")
+        # draw text
+        for i, ch in enumerate(s.target_text):
+            draw_char(i, ch)
+
+        # caret after last char
+        if s.position >= len(s.target_text) and self._blink:
+            p.setPen(QColor(theme.caret))
+            p.drawText(x, y, "|")
