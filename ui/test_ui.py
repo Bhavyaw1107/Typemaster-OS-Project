@@ -1,263 +1,311 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGraphicsOpacityEffect
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal, QTimer
-from PySide6.QtGui import QKeyEvent
-import pyqtgraph as pg
-import random
-import re
-import time
+# ui/test_ui.py
+from __future__ import annotations
+from collections import deque
 
-from app.state import TestState
-from app.audio import AudioEngine
-from app.themes import THEMES, DEFAULT_THEME_INDEX
-from app.calculation import rolling_wpm, smooth
-from utils.graph_helper import setup_wpm_plot, update_curve
-from utils.file_handler import load_stakeholders
-from ui.widgets.typing_area import TypingArea
+from PySide6.QtCore import Qt, QTimer, Slot, Signal
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy
 
-# A compact, common English word list (you can expand later)
-_WORDS = [
-    "the","be","to","of","and","a","in","that","have","I",
-    "it","for","not","on","with","he","as","you","do","at",
-    "this","but","his","by","from","they","we","say","her","she",
-    "or","an","will","my","one","all","would","there","their",
-    "what","so","up","out","if","about","who","get","which","go",
-    "me","when","make","can","like","time","no","just","him","know",
-    "take","people","into","year","your","good","some","could","them","see",
-    "other","than","then","now","look","only","come","its","over","think",
-    "also","back","after","use","two","how","our","work","first","well",
-    "way","even","new","want","because","any","these","give","day","most"
-]
+from services.typing_engine import TypingEngine
+from services.weakkeys import WeakKeys
+from core.chrono import RealtimeTimer
+from ui.session_summary import SessionSummary
 
-def _make_words_stream(n_words: int = 60) -> str:
-    return " ".join(random.choice(_WORDS) for _ in range(n_words)) + " "
 
 class TestUI(QWidget):
-    finished = Signal(float, float, float, dict)  # wpm, acc, dur, weak_keys
+    # main window can connect to this if needed
+    finished = Signal(float, float, float, dict)  # wpm, acc%, secs, weakkeys_snapshot
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.theme_idx = DEFAULT_THEME_INDEX
-        self.theme = THEMES[self.theme_idx]
-        self.state = TestState()
-        self.audio = AudioEngine()
-        self.audio.load_from_theme(self.theme)
 
-        # session options
-        self._time_limit = None
-        self._include_punct = True
-        self._include_numbers = True
+        # ===== Layout (centered, no wasted space) =====
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 30, 0, 30)
+        root.setSpacing(28)
 
-        # timers
-        self._tick = QTimer(self)
-        self._tick.timeout.connect(self._maybe_timeout)
-        self._tick.start(100)
+        # --- stats row (centered) ---
+        stats = QHBoxLayout()
+        stats.setSpacing(40)
 
-        self._build_ui()
-        self.apply_theme()
+        self.lblTimer = QLabel("0.0s", self)
+        self.lblTimer.setObjectName("lblTimer")
+        self.lblTimer.setAlignment(Qt.AlignCenter)
 
-        # initial content: words mode
-        self.set_text(_make_words_stream())
-        self._intro_visible(True)
+        self.lblWPM = QLabel("0.0 WPM", self)
+        self.lblWPM.setObjectName("lblWPM")
+        self.lblWPM.setAlignment(Qt.AlignCenter)
 
-    # ---------- Session configuration ----------
-    def configure_session(self, *, time_limit=None, include_punct=True, include_numbers=True):
-        self._time_limit = time_limit
-        self._include_punct = include_punct
-        self._include_numbers = include_numbers
+        self.lblAcc = QLabel("100% ACC", self)
+        self.lblAcc.setObjectName("lblAcc")
+        self.lblAcc.setAlignment(Qt.AlignCenter)
 
-    def _preprocess_text(self, text: str) -> str:
-        t = text
-        if not self._include_punct:
-            t = re.sub(r"[^\w\s]", "", t)
-        if not self._include_numbers:
-            t = re.sub(r"\d", "", t)
-        return t
+        for lab in (self.lblTimer, self.lblWPM, self.lblAcc):
+            stats.addWidget(lab)
 
-    # ---------- UI ----------
-    def _build_ui(self):
-        self.setObjectName("TestUI")
-        self.setFocusPolicy(Qt.StrongFocus)
+        root.addLayout(stats)
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(18)
+        # --- typing line (HTML styled, centered, expands) ---
+        self.lblLine = QLabel("", self)
+        self.lblLine.setObjectName("lblLine")
+        self.lblLine.setTextFormat(Qt.RichText)
+        self.lblLine.setWordWrap(True)
+        self.lblLine.setAlignment(Qt.AlignCenter)
+        self.lblLine.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.lblLine.setMinimumHeight(100)
+        root.addWidget(self.lblLine, stretch=1)
 
-        # Left: typing
-        left = QVBoxLayout(); left.setSpacing(12)
-        self.typing = TypingArea(lambda: self.state, lambda: self.theme)
-        left.addWidget(self.typing, stretch=1)
-        self.stats = QLabel("WPM: 0   Accuracy: 100%   Keys: 0")
-        self.stats.setObjectName("StatsLabel")
-        left.addWidget(self.stats)
-        root.addLayout(left, stretch=3)
+        # ===== Engines / timers =====
+        self.engine = TypingEngine("")
+        self.weak = WeakKeys()
 
-        # Right: graph + weak keys
-        right = QVBoxLayout()
-        self.plot = pg.PlotWidget()
-        self.curve = setup_wpm_plot(self.plot, self.theme.graph_line)
-        right.addWidget(self.plot, stretch=1)
-        self.weakkeys_label = QLabel("Weak keys: —")
-        right.addWidget(self.weakkeys_label)
-        root.addLayout(right, stretch=2)
+        # Real-time timer (100 ms)
+        self.timer = RealtimeTimer(tick_ms=100, parent=self)
+        self.timer.elapsedChanged.connect(self.on_elapsed_changed)
 
-        # Intro overlay (stakeholders)
-        data = load_stakeholders()
-        self.overlay = QFrame(self); self.overlay.setObjectName("IntroOverlay")
-        self.overlay.setFrameShape(QFrame.NoFrame)
-        ovl = QVBoxLayout(self.overlay); ovl.setContentsMargins(32, 32, 32, 32)
-        title = QLabel(data.get("title", "Welcome to Typemaster")); title.setProperty("tm", "title")
-        subtitle = QLabel(data.get("subtitle", "Press any key to start.")); subtitle.setWordWrap(True)
-        ovl.addWidget(title); ovl.addWidget(subtitle)
-        stake = data.get("stakeholders", [])
-        if stake:
-            hdr = QLabel("Stakeholders"); hdr.setStyleSheet("font-weight: 600; margin-top: 12px;")
-            ovl.addWidget(hdr)
-            for person in stake:
-                line = QLabel(f"• {person.get('name','')} — {person.get('role','')}"
-                              + (f" ({person.get('note')})" if person.get('note') else ""))
-                line.setWordWrap(True); ovl.addWidget(line)
-        self.overlay.setGraphicsEffect(QGraphicsOpacityEffect(self.overlay))
-        self.overlay_effect = self.overlay.graphicsEffect()
+        # Metrics refresh @10 Hz
+        self._ui_tick = QTimer(self)
+        self._ui_tick.setInterval(100)
+        self._ui_tick.timeout.connect(self.refresh_metrics)
+        self._ui_tick.start()
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self.overlay.setGeometry(self.rect())
+        # Caret blink
+        self._caret_on = True
+        self._caret_timer = QTimer(self)
+        self._caret_timer.setInterval(500)
+        self._caret_timer.timeout.connect(self._toggle_caret)
+        self._caret_timer.start()
 
-    def _intro_visible(self, vis: bool):
-        self.overlay.setVisible(True)
-        anim = QPropertyAnimation(self.overlay_effect, b"opacity")
-        anim.setDuration(300)
-        anim.setEasingCurve(QEasingCurve.InOutQuad)
-        anim.setStartValue(1.0 if vis else 0.0)
-        anim.setEndValue(0.0 if vis else 1.0)
-        anim.finished.connect(lambda: self.overlay.setVisible(vis))
-        anim.start(QPropertyAnimation.DeleteWhenStopped)
+        # State
+        self._active_seconds = 0.0
+        self._running = False
+        self.current_text: str | None = None  # for MainWindow use
 
-    # ---------- Content ----------
+        # Buffers for post-run graph
+        self._wpm_time = deque(maxlen=3600)  # ~6 min @ 10Hz
+        self._wpm_vals = deque(maxlen=3600)
+
+        # 3-line window tuning
+        self._approx_chars_per_line = 58  # adjust to your font/width
+        self._visible_lines = 3
+
+    # ===== Public API =====
+
     def set_text(self, text: str):
-        self.state.reset(self._preprocess_text(text))
-        self.typing.update()
+        self.engine.set_text(text or "")
+        self.current_text = text or ""
+        self._render_line()
 
     def set_theme(self, theme):
-        self.theme = theme
-        self.apply_theme()
-        self.audio.load_from_theme(theme)
+        # allow theme colors to affect labels without touching global QSS
+        self.setStyleSheet(
+            f"""
+            QLabel#lblLine {{ color: {theme.primary}; }}
+            QLabel#lblTimer {{ color: {theme.secondary}; }}
+            QLabel#lblWPM   {{ color: {theme.accent}; }}
+            QLabel#lblAcc   {{ color: {theme.secondary}; }}
+            """
+        )
 
-    def apply_theme(self):
-        css = f"""
-        QWidget#TestUI {{
-            background: {self.theme.bg};
-            color: {self.theme.text};
-        }}
-        QLabel#StatsLabel {{ font-size: 18px; }}
+    def configure_session(
+        self, time_limit=None, include_punct=True, include_numbers=True
+    ):
+        # reserved for future options
+        pass
+
+    def start_test(self, text: str | None = None):
+        if text is not None:
+            self.set_text(text)
+        self.engine.reset()
+        self._wpm_time.clear()
+        self._wpm_vals.clear()
+        self._active_seconds = 0.0
+        self._caret_on = True
+        self._render_line()
+        self.timer.start()
+        self._running = True
+        self.setFocus()
+
+    def pause_test(self):
+        if self._running:
+            self.timer.pause()
+
+    def resume_test(self):
+        if self._running:
+            self.timer.resume()
+            self._caret_on = True
+
+    def finish_test(self):
+        if self._running:
+            self.timer.stop()
+            self._running = False
+        self.refresh_metrics()
+
+        wpm = self.engine.wpm(self._active_seconds)
+        acc = self.engine.accuracy() * 100.0
+        snapshot = self.weak.snapshot()
+
+        dlg = SessionSummary(
+            wpm=wpm,
+            acc=acc,
+            secs=self._active_seconds,
+            times=list(self._wpm_time),
+            wpms=list(self._wpm_vals),
+            parent=self,
+        )
+        dlg.exec()
+
+        try:
+            self.finished.emit(wpm, acc, self._active_seconds, snapshot)
+        except Exception:
+            pass
+
+        self._render_line()
+
+    # ===== Internals =====
+
+    @Slot(float)
+    def on_elapsed_changed(self, secs: float):
+        self._active_seconds = secs
+        self.lblTimer.setText(f"{secs:0.1f}s")
+
+    def refresh_metrics(self):
+        wpm = self.engine.wpm(self._active_seconds)
+        acc = self.engine.accuracy() * 100.0
+        self.lblWPM.setText(f"{wpm:0.1f} WPM")
+        self.lblAcc.setText(f"{acc:0.1f}%")
+
+        # buffer for summary graph
+        self._wpm_time.append(self._active_seconds)
+        self._wpm_vals.append(wpm)
+
+    def _toggle_caret(self):
+        self._caret_on = not self._caret_on
+        if self._running:
+            self._render_line()
+
+    # ---- 3-line window rendering ----
+    def _render_line(self):
+        tgt = self.engine.target or ""
+        typed = self.engine.typed or ""
+
+        window_chars = self._approx_chars_per_line * self._visible_lines
+
+        # compute the visible window by words near the caret
+        start, end = self._compute_visible_window(tgt, typed, window_chars)
+        display = tgt[start:end]
+        typed_rel = max(0, len(typed) - start)
+        typed_rel = min(typed_rel, len(display))
+
+        parts = []
+        # paint characters within window
+        for idx, ch in enumerate(display):
+            global_idx = start + idx
+            if idx < typed_rel:
+                if typed[global_idx] == tgt[global_idx]:
+                    parts.append(f'<span style="color:#22c55e">{ch}</span>')
+                else:
+                    parts.append(f'<span style="color:#ef4444">{ch}</span>')
+            else:
+                parts.append(f'<span style="color:#6b7280">{ch}</span>')
+
+        # caret
+        caret_html = (
+            '<span style="color:#eab308">|</span>'
+            if self._caret_on
+            else '<span style="color:transparent">|</span>'
+        )
+        caret_pos = typed_rel
+        caret_pos = max(0, min(caret_pos, len(parts)))
+        parts.insert(caret_pos, caret_html)
+
+        self.lblLine.setText("".join(parts))
+
+    def _compute_visible_window(
+        self, tgt: str, typed: str, window_chars: int
+    ) -> tuple[int, int]:
         """
-        self.setStyleSheet(css)
-        self.plot.setBackground(None)
-        self.curve.setPen({'color': self.theme.graph_line, 'width': 2.5})
+        Return (start, end) indices of the slice of `tgt` to display
+        so that ~3 lines are visible and the caret stays near the center.
+        We respect word boundaries where possible.
+        """
+        n = len(tgt)
+        caret = min(len(typed), n)
 
-    # ---------- Typing engine (monkeytype-like) ----------
-    def keyPressEvent(self, e: QKeyEvent):
-        key_text = e.text()
-        key = e.key()
-        mods = e.modifiers()
+        # Aim caret in the middle of the window when possible
+        half = window_chars // 2
+        start = max(0, caret - half)
+        end = min(n, start + window_chars)
 
-        # ignore nav keys / tab
-        if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Tab):
+        # expand end to next whitespace to avoid cutting a word at end
+        while (
+            end < n and not tgt[end - 1].isspace() and (end - start) < window_chars + 20
+        ):
+            end += 1
+
+        # pull start back to previous whitespace
+        while (
+            start > 0
+            and not tgt[start].isspace()
+            and (end - start) <= window_chars + 20
+        ):
+            start -= 1
+
+        # final clamp
+        start = max(0, start)
+        end = min(n, max(end, start + 1))
+        return start, end
+
+    # ===== Key handling =====
+
+    def keyPressEvent(self, ev):
+        if not self._running:
+            return super().keyPressEvent(ev)
+
+        nk = self._normalize_key(ev)
+        if nk is None:
             return
 
-        # quick controls
-        if key == Qt.Key_Escape:
-            self._reset_words()
-            return
-        if (mods & Qt.ControlModifier) and key in (Qt.Key_R,):
-            self._reset_words()
+        if nk == "<BACKSPACE>":
+            self._backspace()
             return
 
-        # start on first printable key
-        if not self.state.is_running and self.state.position == 0 and key_text:
-            self.state.start()
-            self._intro_visible(False)
+        before = self.engine.stats.correct_chars
+        self.engine.process_key(nk)
+        correct_now = self.engine.stats.correct_chars > before
+        self.weak.note(nk, correct_now)
+        self._render_line()
 
-        # no text? (e.g., function keys)
-        if key_text == "" and key != Qt.Key_Backspace and key != Qt.Key_Space:
-            return
+    def _normalize_key(self, ev) -> str | None:
+        if ev.isAutoRepeat():
+            return None
+        if ev.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            return None
 
-        pos = self.state.position
+        key = ev.key()
+        t = ev.text()
 
-        # Backspace behavior: allow correcting across words
         if key == Qt.Key_Backspace:
-            if pos > 0 and self.state.is_running:
-                # remove last typed char
-                self.state.position -= 1
-                # also drop last keystroke mark to repaint state accurately
-                if self.state.keystrokes:
-                    self.state.keystrokes.pop()
-                self.typing.update()
-                self._update_stats_and_graph()
+            return "<BACKSPACE>"
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            return "\n"
+
+        if t and (t >= " " or t == "\t"):
+            return t
+        return None
+
+    def _backspace(self):
+        if not self.engine.typed:
             return
+        self.engine.typed = self.engine.typed[:-1]
+        self._recount_stats()
+        self._render_line()
 
-        # Normal char or space
-        if pos >= len(self.state.target_text):
-            return
-
-        expected = self.state.target_text[pos]
-
-        # Monkeytype behavior: space advances to next word; if still within word,
-        # treat as a wrong char if expected wasn't a space.
-        ch = key_text
-        if key == Qt.Key_Space:
-            ch = " "
-
-        is_correct = (ch == expected)
-        self.state.mark_key(ch, is_correct)
-        self.audio.play_key()
-        (self.audio.play_ok() if is_correct else self.audio.play_err())
-
-        # advance one position always (like monkeytype), even if wrong; you can backspace to fix
-        self.state.position += 1
-
-        # When we reach end of buffer, append more words (infinite stream)
-        if self.state.position > len(self.state.target_text) - 20:
-            self.state.target_text += _make_words_stream(20)
-
-        self._update_stats_and_graph()
-        self.typing.update()
-
-    def _reset_words(self):
-        self.state.stop()
-        self.state.reset(_make_words_stream())
-        self._intro_visible(True)
-        self.typing.update()
-        self._update_stats_and_graph()
-
-    # ---------- Time limit ----------
-    def _maybe_timeout(self):
-        if self._time_limit and self.state.is_running:
-            if self.state.duration() >= self._time_limit:
-                self.state.stop()
-                self._update_stats_and_graph(final=True)
-
-    # ---------- Metrics / graph ----------
-    def _update_stats_and_graph(self, final: bool = False):
-        st = self.state
-        flags = [k.correct for k in st.keystrokes]
-        times = [k.t for k in st.keystrokes]
-
-        # Rolling WPM for smooth “live” feel
-        wpm_series = rolling_wpm(flags, times, window_sec=10.0)
-        if wpm_series:
-            update_curve(self.curve, smooth(wpm_series, 0.3))
-
-        # Overall stats
-        hits = sum(1 for f in flags if f)
-        acc = (hits / len(flags) * 100.0) if flags else 100.0
-        live_wpm = wpm_series[-1] if wpm_series else 0.0
-        tl = f"  •  Time: {self._time_limit - int(st.duration())}s" if (self._time_limit and st.is_running) else ""
-        self.stats.setText(f"WPM: {live_wpm:.1f}   Accuracy: {acc:.1f}%   Keys: {len(flags)}{tl}")
-
-        # Weak keys (top 6 by miss rate)
-        wk = st.weak_keys_ranked()[:6]
-        self.weakkeys_label.setText("Weak keys: " + (", ".join(f"{k}:{int(mr*100)}%" for k, mr, _, _ in wk) if wk else "—"))
-
-        if final:
-            self.finished.emit(live_wpm, acc, st.duration(), st.weak_keys)
+    def _recount_stats(self):
+        t, target = self.engine.typed, self.engine.target
+        self.engine.stats.keystrokes = len(t)
+        self.engine.stats.correct_chars = sum(
+            1 for j, ch in enumerate(t) if j < len(target) and target[j] == ch
+        )
+        self.engine.stats.errors = (
+            self.engine.stats.keystrokes - self.engine.stats.correct_chars
+        )

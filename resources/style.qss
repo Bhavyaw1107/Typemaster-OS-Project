@@ -1,0 +1,30 @@
+/* Global */
+* { font-family: "Cascadia Mono","Fira Code","JetBrains Mono", Consolas, monospace; }
+QWidget { background: #0f1115; color: #e5e7eb; }  /* default if theme not applied */
+
+/* Stats row */
+#lblTimer { color: #9ca3af; font-size: 22px; }
+#lblWPM   { color: #eab308; font-size: 30px; font-weight: 800; }
+#lblAcc   { color: #60a5fa; font-size: 24px; }
+
+/* Typing text */
+#lblLine {
+  font-size: 30px;
+  line-height: 1.7;
+  letter-spacing: 0.6px;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+/* Buttons / Menus / Toolbar */
+QPushButton {
+  background: #1f2937; color: #e5e7eb; border: 1px solid #374151;
+  padding: 8px 12px; border-radius: 10px;
+}
+QPushButton:hover  { background: #273243; }
+QPushButton:pressed{ background: #1b2330; }
+
+QToolBar { background: #0d121a; border: 1px solid #1c2633; }
+QMenu { background: #0d121a; color: #e5e7eb; border: 1px solid #1c2633; }
+QHeaderView::section { background: #111827; color: #9ca3af; border: none; padding: 6px; }
+QTableWidget { gridline-color: #2b3443; alternate-background-color: #0e131b; }
