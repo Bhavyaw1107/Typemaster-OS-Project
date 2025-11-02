@@ -1,3 +1,9 @@
+<<<<<<< HEAD
+README.md
+hello.py
+**/*twinker*.py
+*.py
+=======
 .venv/
 __pycache__/
 *.pyc
@@ -8,3 +14,4 @@ build/
 .idea/
 .vscode/
 .DS_Store
+>>>>>>> 201d5b6241da1ee0eb2df6dccb8dc793f827c85b
