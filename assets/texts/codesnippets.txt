@@ -9,148 +9,34 @@ function fibonacci(n) {
     }
     return sequence;
 }
+
 function isPrime(num) {
     if (num <= 1) return false;
-    for (let i = 2; i * i <= num; i++) if (num % i === 0) return false;
+    for (let i = 2; i * i <= num; i++)
+        if (num % i === 0) return false;
     return true;
 }
+
 function reverseString(str) {
     let result = "";
-    for (let i = str.length - 1; i >= 0; i--) result += str[i];
+    for (let i = str.length - 1; i >= 0; i--)
+        result += str[i];
     return result;
 }
+
 const duration = Number(process.argv[2] || 3600);
 const end = Date.now() + duration * 1000;
 let iter = 0;
-const words = ["hello","world","typing","practice"];
+const words = ["hello", "world", "typing"];
+
 const iv = setInterval(() => {
-    console.log(`--- JS iteration ${++iter} ---`);
-    console.log("fibonacci(10):", fibonacci(10).join(", "));
-    for (let n = 1; n <= 20; n++) console.log(n, isPrime(n) ? "prime" : "not prime");
-    for (const w of words) console.log(`${w} -> ${reverseString(w)}`);
+    console.log(`Iteration ${++iter}`);
+    console.log("fib:", fibonacci(10));
+    for (let n = 1; n <= 20; n++)
+        console.log(n, isPrime(n));
+    for (const w of words)
+        console.log(`${w} -> ${reverseString(w)}`);
     if (Date.now() >= end) {
-        console.log("Duration reached — exiting snippet mode.");
         clearInterval(iv);
     }
 }, 1000);
-
-import sys, time
-def factorial(n):
-    result = 1
-    for i in range(1, n + 1):
-        result *= i
-    return result
-def print_series(limit):
-    for i in range(1, limit + 1):
-        print(f"{i}! = {factorial(i)}", end=" | ")
-    print()
-def is_even(num):
-    return num % 2 == 0
-def find_max(numbers):
-    max_value = numbers[0]
-    for n in numbers:
-        if n > max_value:
-            max_value = n
-    return max_value
-duration = int(sys.argv[1]) if len(sys.argv) > 1 else 3600
-end = time.time() + duration
-nums = [12,45,23,78,56,89,34]
-iter = 0
-while time.time() < end:
-    iter += 1
-    print(f"--- PY iteration {iter} ---")
-    print_series(10)
-    print("even 1..100 count (sample):", sum(1 for i in range(1,101) if is_even(i)))
-    print("max of list:", find_max(nums))
-    time.sleep(1)
-print("Duration reached — exiting snippet mode.")
-
-#include <stdio.h>
-#include <time.h>
-#include <unistd.h>
-int sum_of_squares(int n) {
-    int sum = 0;
-    for (int i = 1; i <= n; i++) sum += i * i;
-    return sum;
-}
-int factorial(int n) {
-    int result = 1;
-    for (int i = 1; i <= n; i++) result *= i;
-    return result;
-}
-int sum_array(int arr[], int size) {
-    int total = 0;
-    for (int i = 0; i < size; i++) total += arr[i];
-    return total;
-}
-int main(int argc, char **argv) {
-    int duration = (argc > 1) ? atoi(argv[1]) : 3600;
-    time_t end = time(NULL) + duration;
-    int nums[] = {5,10,15,20,25};
-    int iter = 0;
-    while (time(NULL) < end) {
-        iter++;
-        printf("--- C iteration %d ---\n", iter);
-        printf("sum_of_squares(10) = %d\n", sum_of_squares(10));
-        for (int i=1;i<=10;i++) printf("%d! = %d\n", i, factorial(i));
-        printf("sum array = %d\n", sum_array(nums, 5));
-        sleep(1);
-    }
-    printf("Duration reached — exiting snippet mode.\n");
-    return 0;
-}
-
-#include <iostream>
-#include <string>
-#include <chrono>
-#include <thread>
-using namespace std;
-int factorial_cpp(int n){
-    int r=1; for(int i=1;i<=n;i++) r*=i; return r;
-}
-bool isPalindrome(const string &s){
-    int i=0,j=s.size()-1; while(i<j){ if(s[i]!=s[j]) return false; i++; j--; } return true;
-}
-int main(int argc, char** argv){
-    int duration = (argc>1) ? atoi(argv[1]) : 3600;
-    auto end = chrono::steady_clock::now() + chrono::seconds(duration);
-    int iter=0;
-    while(chrono::steady_clock::now() < end){
-        iter++;
-        cout << "--- C++ iteration " << iter << " ---\n";
-        for(int i=1;i<=10;i++) cout << i << "! = " << factorial_cpp(i) << "  ";
-        cout << "\nPalindrome check: level -> " << isPalindrome("level") << "\n";
-        cout << "Average sample: ";
-        int numbers[5] = {2,4,6,8,10}; int sum=0;
-        for(int i=0;i<5;i++) sum+=numbers[i];
-        cout << "avg = " << (sum/5.0) << "\n";
-        this_thread::sleep_for(chrono::seconds(1));
-    }
-    cout << "Duration reached — exiting snippet mode.\n";
-    return 0;
-}
-
-public class Snippet {
-    static long factorial(int n) {
-        long r = 1;
-        for (int i = 1; i <= n; i++) r *= i;
-        return r;
-    }
-    public static void main(String[] args) throws Exception {
-        int duration = args.length > 0 ? Integer.parseInt(args[0]) : 3600;
-        long end = System.currentTimeMillis() + duration * 1000L;
-        int iter = 0;
-        while (System.currentTimeMillis() < end) {
-            iter++;
-            System.out.println("--- JAVA iteration " + iter + " ---");
-            for (int i = 1; i <= 10; i++)
-                System.out.print(i + "! = " + factorial(i) + "  ");
-            System.out.println();
-            int num = 12345, rev = 0;
-            while (num != 0) { int d = num % 10; rev = rev * 10 + d; num /= 10; }
-            System.out.println("reversed number: " + rev);
-            Thread.sleep(1000);
-        }
-        System.out.println("Duration reached — exiting snippet mode.");
-    }
-}

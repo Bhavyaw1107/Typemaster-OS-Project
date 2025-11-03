@@ -1,4 +1,3 @@
-# ui/widgets/typing_area.py
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QPainter, QFont, QColor, QPen, QPaintEvent
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
@@ -6,6 +5,27 @@ from PySide6.QtGui import QFontMetricsF
 
 def _pick(theme, attr, default):
     return getattr(theme, attr, default)
+
+
+def _looks_like_code(text: str) -> bool:
+    """
+    Same heuristic as TestUI: determines whether the target_text should be rendered
+    in monospace / code mode. This lets TypingArea switch fonts for layout/painting.
+    """
+    if not text:
+        return False
+    lines = text.splitlines()
+    for ln in lines:
+        if ln.startswith("\t") or ln.startswith("    "):
+            return True
+        stripped = ln.lstrip()
+        if stripped.startswith(("def ", "class ", "function ", "import ", "from ")) or "{" in ln or "}" in ln or "=> " in ln:
+            if len(lines) > 1:
+                return True
+    indent_count = sum(1 for ln in lines if len(ln) - len(ln.lstrip()) >= 2)
+    if len(lines) >= 3 and indent_count >= max(1, len(lines) // 6):
+        return True
+    return False
 
 
 class TypingArea(QWidget):
@@ -25,7 +45,10 @@ class TypingArea(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
 
         # Visuals
-        self._font = QFont("Inter, Segoe UI, Roboto, Arial", 28)
+        # default (non-code) font
+        self._base_font_family = "Inter, Segoe UI, Roboto, Arial"
+        self._mono_font_family = "Monospace"
+        self._font = QFont(self._base_font_family, 28)
         self._line_wrap_px = 1000
         self._line_height = 52
         self._pad_x = 32
@@ -102,10 +125,29 @@ class TypingArea(QWidget):
                 words.append((full, ws_start, i))
         return words
 
+    def _ensure_font_for_text(self, text: str):
+        """
+        Update self._font depending on whether text looks like code.
+        Must be called before creating QFontMetricsF / reflow so layout matches font.
+        """
+        if _looks_like_code(text):
+            f = QFont(self._mono_font_family, 28)
+            # prefer typewriter style hint for monospace on various platforms
+            f.setStyleHint(QFont.Monospace)
+            self._font = f
+        else:
+            f = QFont(self._base_font_family, 28)
+            self._font = f
+
     def _reflow(self):
         """Compute positions for words (not per char) using exact font metrics."""
         s = self.get_state()
-        text = getattr(s, "target_text", "") or ""
+        # Normalize line endings and keep all whitespace exactly as present
+        text = (getattr(s, "target_text", "") or "").replace("\r\n", "\n").replace("\r", "\n")
+
+        # Choose an appropriate font BEFORE measuring
+        self._ensure_font_for_text(text)
+
         panel_rect = self.rect().adjusted(self._pad_x, self._pad_y, -self._pad_x, -self._pad_y)
         wrap_w = min(self._line_wrap_px, max(10, panel_rect.width()))
 
@@ -261,7 +303,8 @@ class TypingArea(QWidget):
 
         panel_rect = self.rect().adjusted(self._pad_x, self._pad_y, -self._pad_x, -self._pad_y)
 
-        text = getattr(s, "target_text", "") or ""
+        # Normalize target_text line endings and preserve whitespace exactly
+        text = (getattr(s, "target_text", "") or "").replace("\r\n", "\n").replace("\r", "\n")
 
         # draw words (each word draws all its characters together)
         for w_idx, pos_pt in enumerate(self._word_positions):

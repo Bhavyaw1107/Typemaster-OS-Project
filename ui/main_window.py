@@ -243,23 +243,46 @@ class MainWindow(QMainWindow):
     # ---------------- Text Loading ----------------
     def _on_load(self):
         """
-        Open a file dialog and load a text file on a background worker.
-        Ensures _on_loaded_text or _on_load_failed is called when done.
+        Open a file dialog and load a text file.
+        If TestUI provides `on_file_selected`, call it directly (clean wiring).
+        Otherwise fall back to the background TextLoadWorker.
         """
         path, _ = QFileDialog.getOpenFileName(self, "Open text", "", "Text (*.txt)")
         if not path:
             return
-        worker = TextLoadWorker(path)
-        worker.signals.loaded.connect(self._on_loaded_text)
-        worker.signals.failed.connect(self._on_load_failed)
-        Workers.pool.start(worker)
+
+        # If TestUI has the on_file_selected slot, prefer calling it (uses TestUI's loader)
+        if hasattr(self.test, "on_file_selected"):
+            try:
+                # call immediately; TestUI will handle reading the file
+                self.test.on_file_selected(path)
+                # ensure autostart disabled since user explicitly loaded text
+                self._waiting_for_autostart = False
+                if hasattr(self.test, "enable_autostart"):
+                    self.test.enable_autostart(False)
+                self._exit_autostart_mode()
+            except Exception:
+                # fallback to worker if something goes wrong
+                worker = TextLoadWorker(path)
+                worker.signals.loaded.connect(self._on_loaded_text)
+                worker.signals.failed.connect(self._on_load_failed)
+                Workers.pool.start(worker)
+        else:
+            # existing background-loading path
+            worker = TextLoadWorker(path)
+            worker.signals.loaded.connect(self._on_loaded_text)
+            worker.signals.failed.connect(self._on_load_failed)
+            Workers.pool.start(worker)
 
     def _on_loaded_text(self, data):
         """
         Called by the TextLoadWorker when the file is loaded successfully.
         Sets the text in TestUI, starts the test immediately and disables autostart.
+        IMPORTANT: preserve all internal newlines and indentation.
         """
-        data = (data or "").strip().replace("\r\n", "\n")
+        # preserve leading/trailing newlines and all internal newlines; just normalize CRLF -> LF
+        data = (data or "").replace("\r\n", "\n").replace("\r", "\n")
+
         # set and start test with loaded content
         if hasattr(self.test, "set_text"):
             self.test.set_text(data)
@@ -270,6 +293,7 @@ class MainWindow(QMainWindow):
                 self.test.start_test(data)
         except Exception:
             pass
+
         # ensure autostart not left on
         self._waiting_for_autostart = False
         if hasattr(self.test, "enable_autostart"):
