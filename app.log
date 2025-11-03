@@ -22,3 +22,23 @@ Traceback (most recent call last):
     def refresh_metrics(self):
     
 KeyboardInterrupt
+2025-11-03 13:33:59,383 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\main.py", line 63, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\main.py", line 56, in main
+    win = MainWindow()
+          ^^^^^^^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 35, in __init__
+    self._build_top_bar(root_v)
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 94, in _build_top_bar
+    btn_load.clicked.connect(self._on_load)
+                             ^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_load'
+2025-11-03 19:15:55,309 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\test_ui.py", line 368, in keyPressEvent
+    if self.timer.is_paused():
+       ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'RealtimeTimer' object has no attribute 'is_paused'

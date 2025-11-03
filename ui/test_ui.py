@@ -16,10 +16,14 @@ def _get(theme, name, default):
 
 
 class TestUI(QWidget):
+    # finished signal used by MainWindow for DB persist
     finished = Signal(float, float, float, dict)  # wpm, acc%, secs, weakkeys_snapshot
+    # NEW: will emit the normalized first key when autostart is enabled
+    firstKey = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setFocusPolicy(Qt.StrongFocus)  # make sure we receive key events
 
         # ===== Layout =====
         root = QVBoxLayout(self)
@@ -54,8 +58,7 @@ class TestUI(QWidget):
         self.lblLine.setAlignment(Qt.AlignCenter)
         self.lblLine.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # 🟢 Monkeytype-like width: wide but bounded so it reads well.
-        # If you want even wider, bump max to 1200 or 1280.
+        # Monkeytype-like width
         self.lblLine.setMinimumWidth(900)
         self.lblLine.setMaximumWidth(1100)
         self.lblLine.setMinimumHeight(140)
@@ -83,6 +86,7 @@ class TestUI(QWidget):
         # State
         self._active_seconds = 0.0
         self._running = False
+        self._paused = False
         self.current_text: str | None = None
 
         # Session config
@@ -93,12 +97,8 @@ class TestUI(QWidget):
         self._wpm_vals = deque(maxlen=3600)
 
         # ===== Viewport tuning =====
-        # Target characters that fit in the visible area (approx).
-        # Wider than before to mimic Monkeytype.
         self._approx_chars_per_line = 90
         self._visible_lines = 3
-
-        # Jitter-free window: only shift when caret crosses margins.
         self._win_start = 0           # current window start (index in target)
         self._left_margin = 0.30      # keep caret inside 30%..70% band
         self._right_margin = 0.70
@@ -113,11 +113,27 @@ class TestUI(QWidget):
             "err_ul": "rgba(239,68,68,0.9)",
         }
 
-        # Larger font for the whole typing line (Monkeytype vibe)
-        # You can tweak size here if you want smaller/larger text.
+        # Larger font for the whole typing line
         self.lblLine.setStyleSheet("font-size: 34px; line-height: 1.35;")
 
+        # NEW: autostart flag (MainWindow will enable this)
+        self._autostart = False
+
     # ===== Public API =====
+
+    def enable_autostart(self, enabled: bool = True):
+        """Allow the very first key press to start a session via MainWindow."""
+        self._autostart = bool(enabled)
+
+    def type_programmatically(self, nk: str):
+        """Feed a key into the engine (used to count the first key after autostart)."""
+        if not nk:
+            return
+        before = self.engine.stats.correct_chars
+        self.engine.process_key(nk)
+        correct_now = self.engine.stats.correct_chars > before
+        self.weak.note(nk, correct_now)
+        self._render_line()
 
     def set_text(self, text: str):
         self.engine.set_text(text or "")
@@ -166,11 +182,13 @@ class TestUI(QWidget):
     def pause_test(self):
         if self._running:
             self.timer.pause()
+            self._paused = True
 
     def resume_test(self):
         if self._running:
             self.timer.resume()
             self._caret_on = True
+            self._paused = False
 
     def finish_test(self):
         if self._running:
@@ -239,18 +257,20 @@ class TestUI(QWidget):
         right_band = self._win_start + int(window_chars * self._right_margin)
 
         if caret < left_band or caret > right_band:
-            # Re-center caret into the band; snap start to a word boundary.
             desired_center = self._win_start + window_chars // 2
-            # shift so caret heads to middle
             shift = caret - desired_center
             new_start = max(0, self._win_start + shift)
-
-            # Respect word boundary backwards a bit
             new_start = self._snap_to_prev_space(tgt, new_start, limit=40)
             self._win_start = new_start
 
         start = self._win_start
         end = min(len(tgt), start + window_chars)
+        
+        # Don't break words at the end - extend to complete the word
+        if end < len(tgt) and not tgt[end].isspace():
+            while end < len(tgt) and not tgt[end].isspace():
+                end += 1
+        
         display = tgt[start:end]
 
         typed_rel = max(0, len(typed) - start)
@@ -264,9 +284,8 @@ class TestUI(QWidget):
         err_ul = self._colors["err_ul"]
 
         # current word highlight bounds
-        caret_global = caret
-        w_start = self._find_word_start(tgt, caret_global)
-        w_end = self._find_word_end(tgt, caret_global)
+        w_start = self._find_word_start(tgt, caret)
+        w_end = self._find_word_end(tgt, caret)
         w_start_rel = max(0, w_start - start)
         w_end_rel = max(0, min(w_end - start, len(display)))
 
@@ -334,12 +353,29 @@ class TestUI(QWidget):
 
     # ===== Key handling =====
     def keyPressEvent(self, ev):
-        if not self._running:
-            return super().keyPressEvent(ev)
-
         nk = self._normalize_key(ev)
         if nk is None:
             return
+
+        # NEW: if not running and autostart is enabled, let MainWindow handle first key
+        if not self._running and self._autostart:
+            # Emit firstKey for the main window to begin the session
+            self.firstKey.emit(nk)
+            # IMPORTANT: accept the event here so it doesn't propagate to parent widgets
+            # (prevents the top-bar theme/menu from opening on the first key)
+            try:
+                ev.accept()
+            except Exception:
+                pass
+            return
+
+        if not self._running:
+            # default behavior when not running (no autostart): ignore
+            return super().keyPressEvent(ev)
+
+        # Auto-resume on any key press (like Monkeytype)
+        if self._paused:
+            self.resume_test()
 
         if nk == "<BACKSPACE>":
             self._backspace()
@@ -363,11 +399,11 @@ class TestUI(QWidget):
         t = ev.text()
 
         if key == Qt.Key_Backspace:
-            return "<BACKSPACE>"          # backspace will also auto-repeat when held
+            return "<BACKSPACE>"
         if key in (Qt.Key_Return, Qt.Key_Enter):
             return "\n"
 
-        if t and (t >= " " or t == "\t"): # printable characters (space and above, plus tab)
+        if t and (t >= " " or t == "\t"):
             return t
         return None
 
@@ -397,3 +433,38 @@ class TestUI(QWidget):
         g = int(h[2:4], 16)
         b = int(h[4:6], 16)
         return f"rgba({r},{g},{b},{max(0.0, min(alpha, 1.0))})"
+
+    def reset_test(self, new_text: str | None = None):
+        """Hard reset: stop timers, clear stats/buffers, reset viewport and labels."""
+        try:
+            self.timer.stop()
+        except Exception:
+            pass
+        self._running = False
+
+        # clear session config (e.g., time limit)
+        self._time_limit = None
+
+        # engine + text
+        self.engine.reset()
+        if new_text is not None:
+            self.engine.set_text(new_text or "")
+            self.current_text = new_text or ""
+        else:
+            self.engine.set_text(self.current_text or "")
+
+        # ui state
+        self._active_seconds = 0.0
+        self._paused = False
+        self._wpm_time.clear()
+        self._wpm_vals.clear()
+        self._caret_on = True
+        self._win_start = 0  # reset stable window
+
+        # refresh labels
+        self.lblTimer.setText("0.0 s")
+        self.lblWPM.setText("0.0 WPM")
+        self.lblAcc.setText("0.0 %")
+
+        # repaint typing line
+        self._render_line()

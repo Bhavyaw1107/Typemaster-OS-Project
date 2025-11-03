@@ -4,16 +4,14 @@ from PySide6.QtWidgets import (
     QMenu, QFileDialog, QMessageBox,
     QToolButton, QPushButton
 )
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
-
 import json
 import pathlib, random
 
 from ui.test_ui import TestUI
 from ui.weakkeys_dialog import WeakKeysDialog
 from ui.widgets.session_dialog import SessionDialog
-
 from app.themes import THEMES, DEFAULT_THEME_INDEX, load_custom_themes
 from utils.file_handler import load_default_text
 from utils.db_helper import upsert_user, insert_result
@@ -25,22 +23,29 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Typemaster")
         self.resize(1200, 720)
-
         self.user_id = upsert_user("guest")
         load_custom_themes()
         self.theme_idx = DEFAULT_THEME_INDEX
+        self._waiting_for_autostart = False
 
         root = QWidget(self)
         root_v = QVBoxLayout(root)
-        root_v.setContentsMargins(16, 40, 16, 16)   # ← Increased top margin
-        root_v.setSpacing(24)                      # ← Slightly more spacing
-
+        root_v.setContentsMargins(16, 40, 16, 16)
+        root_v.setSpacing(24)
         self._build_top_bar(root_v)
 
+        # --- Test UI setup ---
         self.test = TestUI(self)
-        self.test.set_text(load_default_text())
+        paragraph_text = self._assemble_text("Paragraph")
+        self.test.set_text(paragraph_text)
+        self.test.configure_session(time_limit=30)
+        self.test.current_text = paragraph_text
+
+        # Connect signals
         if hasattr(self.test, "finished"):
             self.test.finished.connect(self._on_test_finished)
+        if hasattr(self.test, "firstKey"):
+            self.test.firstKey.connect(self._on_first_key)
 
         test_h = QHBoxLayout()
         test_h.addStretch(1)
@@ -49,72 +54,78 @@ class MainWindow(QMainWindow):
         root_v.addLayout(test_h, 1)
         self.setCentralWidget(root)
 
-        # Remove menu bar
-        self.menuBar().setVisible(False)
+        # Prevent main window from stealing keyboard focus
+        # ensures TestUI is the focus receiver
+        try:
+            self.setFocusPolicy(Qt.NoFocus)
+        except Exception:
+            pass
 
-        # apply theme
+        # Make sure TestUI has focus so it receives the first keypress
+        try:
+            self.test.setFocus()
+        except Exception:
+            pass
+
+        # Hide menu bar & apply theme
+        self.menuBar().setVisible(False)
         self._apply_theme(DEFAULT_THEME_INDEX)
 
+        # Enter autostart immediately (like Monkeytype)
+        self._enter_autostart_mode()
 
-    # ---------------- Floating Top Bar ----------------
+    # ---------------- Top Bar ----------------
     def _build_top_bar(self, parent_layout):
-        from PySide6.QtWidgets import QStyle
-
         bar = QWidget(self)
         bar.setObjectName("TopBar")
         h = QHBoxLayout(bar)
-        h.setContentsMargins(14, 16, 14, 16)   # <--- moved down visually
+        h.setContentsMargins(14, 16, 14, 16)
         h.setSpacing(10)
 
-        # Theme dropdown (clean, no arrow)
         self.theme_menu = QMenu(self)
         self._rebuild_theme_menu()
-
         theme_btn = QToolButton(bar)
         theme_btn.setText("Theme")
         theme_btn.setObjectName("TopBtn")
         theme_btn.setMenu(self.theme_menu)
         theme_btn.setPopupMode(QToolButton.InstantPopup)
-
-        # Remove menu indicator arrow
-        theme_btn.setStyleSheet(
-            "QToolButton::menu-indicator { image: none; width:0; height:0; }"
-        )
-
+        theme_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width:0; height:0; }")
+        # Important: prevent theme button from taking keyboard focus
+        theme_btn.setFocusPolicy(Qt.NoFocus)
         h.addWidget(theme_btn)
 
-        # Session
+        # Session / Weak Keys / Load / Reset
         btn_session = QPushButton("Session…", bar)
         btn_session.clicked.connect(self._open_session)
         btn_session.setObjectName("TopBtn")
+        btn_session.setFocusPolicy(Qt.NoFocus)   # << prevent focus
         h.addWidget(btn_session)
 
-        # Weak Keys
         btn_weak = QPushButton("Weak Keys…", bar)
         btn_weak.clicked.connect(self._open_weakkeys)
         btn_weak.setObjectName("TopBtn")
+        btn_weak.setFocusPolicy(Qt.NoFocus)
         h.addWidget(btn_weak)
 
-        # Load Text
         btn_load = QPushButton("Load text…", bar)
         btn_load.clicked.connect(self._on_load)
         btn_load.setObjectName("TopBtn")
+        btn_load.setFocusPolicy(Qt.NoFocus)
         h.addWidget(btn_load)
 
-        # Reset
         btn_reset = QPushButton("Reset test", bar)
         btn_reset.clicked.connect(self._reset_test)
         btn_reset.setObjectName("TopBtn")
+        btn_reset.setFocusPolicy(Qt.NoFocus)
         h.addWidget(btn_reset)
 
-        h.addStretch(1)  # Push Start/Stop controls to right
+        h.addStretch(1)
 
         # Controls
         self.btnStart = QPushButton("Start", bar)
         self.btnPause = QPushButton("Pause", bar)
         self.btnResume = QPushButton("Resume", bar)
         self.btnFinish = QPushButton("Finish", bar)
-
         for button, handler in [
             (self.btnStart, self._on_start),
             (self.btnPause, self._on_pause),
@@ -123,11 +134,11 @@ class MainWindow(QMainWindow):
         ]:
             button.clicked.connect(handler)
             button.setObjectName("TopBtn")
+            button.setFocusPolicy(Qt.NoFocus)   # << prevent focus
             h.addWidget(button)
 
         parent_layout.addWidget(bar)
 
-        # --- Top Bar Styling ---
         self._topbar_qss = """
         QWidget#TopBar {
             background: rgba(255,255,255,0.04);
@@ -144,40 +155,10 @@ class MainWindow(QMainWindow):
             border-color: rgba(255,255,255,0.32);
             background: rgba(255,255,255,0.06);
         }
-        QToolButton::menu-indicator {
-            image: none !important;  /* Ensure arrow is fully hidden */
-            width: 0px;
-            height: 0px;
-        }
+        QToolButton::menu-indicator { image: none !important; width: 0px; height: 0px; }
         """
 
-    # ---------------- Menus ----------------
-    def _create_actions(self):
-        self.actStart = QAction("Start", self)
-        self.actPause = QAction("Pause", self)
-        self.actResume = QAction("Resume", self)
-        self.actFinish = QAction("Finish", self)
-        self.actLoad = QAction("Load text…", self)
-        self.actWeak = QAction("Weak keys…", self)
-
-        self.actStart.triggered.connect(self._on_start)
-        self.actPause.triggered.connect(self._on_pause)
-        self.actResume.triggered.connect(self._on_resume)
-        self.actFinish.triggered.connect(self._on_finish)
-        self.actLoad.triggered.connect(self._on_load)
-        self.actWeak.triggered.connect(self._open_weakkeys)
-
-    def _build_menus(self):
-        menu = self.menuBar().addMenu("Test")
-        menu.addAction(self.actStart)
-        menu.addAction(self.actPause)
-        menu.addAction(self.actResume)
-        menu.addAction(self.actFinish)
-        menu.addSeparator()
-        menu.addAction(self.actLoad)
-        menu.addAction(self.actWeak)
-
-    # ---------------- Themes ----------------
+    # ---------------- Theme ----------------
     def _rebuild_theme_menu(self):
         self.theme_menu.clear()
         for i, t in enumerate(THEMES):
@@ -188,16 +169,11 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, idx):
         theme = THEMES[idx]
         self.theme_idx = idx
-
         if hasattr(self.test, "set_theme"):
             self.test.set_theme(theme)
-
         self.setStyleSheet(
             f"""
-            QWidget {{
-                background: {theme.background};
-                color: {theme.primary};
-            }}
+            QWidget {{ background: {theme.background}; color: {theme.primary}; }}
             QLabel#lblLine {{ color: {theme.primary}; }}
             QLabel#lblTimer, QLabel#lblAcc {{ color: {theme.secondary}; }}
             QLabel#lblWPM   {{ color: {theme.accent}; }}
@@ -206,8 +182,70 @@ class MainWindow(QMainWindow):
         )
         self.setWindowTitle(f"Typemaster — {theme.name}")
 
+    # ---------------- Autostart Flow ----------------
+    def _enter_autostart_mode(self):
+        self._waiting_for_autostart = True
+        if hasattr(self.test, "enable_autostart"):
+            self.test.enable_autostart(True)
+        self.setWindowTitle("Typemaster — Press any key to start...")
+        # ensure test has focus while waiting for autostart
+        try:
+            self.test.setFocus()
+        except Exception:
+            pass
+
+    def _exit_autostart_mode(self):
+        self._waiting_for_autostart = False
+        if hasattr(self.test, "enable_autostart"):
+            self.test.enable_autostart(False)
+        theme_name = THEMES[self.theme_idx].name if 0 <= self.theme_idx < len(THEMES) else "Typemaster"
+        self.setWindowTitle(f"Typemaster — {theme_name}")
+
+    def _on_first_key(self, nk: str):
+        """Start typing session when first key is pressed."""
+        if not self._waiting_for_autostart:
+            return
+        self._exit_autostart_mode()
+        self.test.start_test(self.test.current_text)
+        self.test.type_programmatically(nk)
+
+    # ---------------- Session / Controls ----------------
+    def _open_session(self):
+        dlg = SessionDialog(self)
+        if not dlg.exec():
+            return
+        cfg = dlg.config
+        text = self._assemble_text(cfg["source"])
+        self.test.configure_session(cfg["time_limit"])
+        self.test.set_text(text)
+        self.test.current_text = text
+        self._enter_autostart_mode()
+
+    def _on_start(self):
+        self._enter_autostart_mode()
+
+    def _on_pause(self):
+        self.test.pause_test()
+
+    def _on_resume(self):
+        self.test.resume_test()
+
+    def _on_finish(self):
+        self.test.finish_test()
+
+    def _reset_test(self):
+        paragraph_text = self._assemble_text("Paragraph")
+        self.test.reset_test(paragraph_text)
+        self.test.configure_session(30)
+        self.test.current_text = paragraph_text
+        self._enter_autostart_mode()
+
     # ---------------- Text Loading ----------------
     def _on_load(self):
+        """
+        Open a file dialog and load a text file on a background worker.
+        Ensures _on_loaded_text or _on_load_failed is called when done.
+        """
         path, _ = QFileDialog.getOpenFileName(self, "Open text", "", "Text (*.txt)")
         if not path:
             return
@@ -217,13 +255,64 @@ class MainWindow(QMainWindow):
         Workers.pool.start(worker)
 
     def _on_loaded_text(self, data):
+        """
+        Called by the TextLoadWorker when the file is loaded successfully.
+        Sets the text in TestUI, starts the test immediately and disables autostart.
+        """
         data = (data or "").strip().replace("\r\n", "\n")
-        self.test.set_text(data)
-        self.test.start_test(data)
-        self.test.current_text = data
+        # set and start test with loaded content
+        if hasattr(self.test, "set_text"):
+            self.test.set_text(data)
+            self.test.current_text = data
+        try:
+            # start right away (user likely expects auto-start on load)
+            if hasattr(self.test, "start_test"):
+                self.test.start_test(data)
+        except Exception:
+            pass
+        # ensure autostart not left on
+        self._waiting_for_autostart = False
+        if hasattr(self.test, "enable_autostart"):
+            self.test.enable_autostart(False)
+        self._exit_autostart_mode()
 
     def _on_load_failed(self, msg):
         QMessageBox.warning(self, "Load Text", msg)
+
+    # ---------------- Text Source ----------------
+    def _load_blocks(self, filename):
+        p = pathlib.Path("assets/texts") / filename
+        if not p.exists():
+            return []
+        txt = p.read_text(encoding="utf-8").strip()
+        return [b.strip() for b in txt.split("\n\n") if b.strip()]
+
+    def _endless(self, blocks, min_chars=50000):
+        if not blocks:
+            return ""
+        out, total, pool, i = [], 0, blocks[:], 0
+        random.shuffle(pool)
+        while total < min_chars:
+            out.append(pool[i])
+            total += len(pool[i]) + 2
+            i = (i + 1) % len(pool)
+            if i == 0:
+                random.shuffle(pool)
+        return "\n\n".join(out)
+
+    def _assemble_text(self, source):
+        file_map = {
+            "Paragraph": "paragraph.txt",
+            "Quotes": "quotes.txt",
+            "Code Snippets": "codesnippets.txt",
+            "Numbers": "numbers.txt",
+            "Punctuation": "punctuation.txt",
+        }
+        filename = file_map.get(source, "paragraph.txt")
+        blocks = self._load_blocks(filename)
+        if source == "Paragraph":
+            return self._endless(blocks)
+        return random.choice(blocks) if blocks else ""
 
     # ---------------- Weak Keys ----------------
     def _open_weakkeys(self):
@@ -240,77 +329,6 @@ class MainWindow(QMainWindow):
         except:
             pass
         WeakKeysDialog(ranked, self).exec()
-
-    # ---------------- Session Handling ----------------
-    def _open_session(self):
-        dlg = SessionDialog(self)
-        if not dlg.exec():
-            return
-        cfg = dlg.config
-
-        text = self._assemble_text(cfg["source"])
-
-        if hasattr(self.test, "configure_session"):
-            self.test.configure_session(cfg["time_limit"])
-
-        self.test.set_text(text)
-        self.test.current_text = text
-        self.test.start_test(text)
-
-    # ---------------- Endless / Source Logic ----------------
-    def _load_blocks(self, filename):
-        p = pathlib.Path("assets/texts") / filename
-        if not p.exists():
-            return []
-        txt = p.read_text(encoding="utf-8").strip()
-        return [b.strip() for b in txt.split("\n\n") if b.strip()]
-
-    def _endless(self, blocks, min_chars=50000):
-        if not blocks:
-            return ""
-        out = []
-        total = 0
-        pool = blocks[:]
-        random.shuffle(pool)
-        i = 0
-        while total < min_chars:
-            out.append(pool[i])
-            total += len(pool[i]) + 2
-            i += 1
-            if i >= len(pool):
-                random.shuffle(pool)
-                i = 0
-        return "\n\n".join(out)
-
-    def _assemble_text(self, source):
-        file_map = {
-            "Paragraph":     "paragraph.txt",
-            "Quotes":        "quotes.txt",
-            "Code Snippets": "codesnippets.txt",
-            "Numbers":       "numbers.txt",       # natural text with numbers
-            "Punctuation":   "punctuation.txt",   # natural text with punctuation
-        }
-
-        filename = file_map.get(source, "paragraph.txt")
-        blocks = self._load_blocks(filename)
-
-        if source == "Paragraph":
-            return self._endless(blocks)  # infinite paragraphs
-
-        # single-block random for the others
-        return random.choice(blocks) if blocks else ""
-
-    # ---------------- Controls ----------------
-    def _on_start(self):
-        self.test.start_test(self.test.current_text or load_default_text())
-    def _on_pause(self):
-        self.test.pause_test()
-    def _on_resume(self):
-        self.test.resume_test()
-    def _on_finish(self):
-        self.test.finish_test()
-    def _reset_test(self):
-        self.test.set_text(load_default_text())
 
     # ---------------- Save Result ----------------
     def _on_test_finished(self, wpm, acc, dur, weak):
