@@ -1,4 +1,3 @@
-# ui/weakkeys_dialog.py
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -9,6 +8,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QFileDialog,
+    QAbstractItemView,   # <-- Added import
 )
 from PySide6.QtCore import Qt
 import csv
@@ -49,19 +49,23 @@ class WeakKeysDialog(QDialog):
         self.plot.setMenuEnabled(False)
         self.plot.setMouseEnabled(x=False, y=False)
         self.plot.hideButtons()
-        self.plot.setClipToView(True)  # <— added
-        self.plot.enableAutoRange("y", True)  # <— added
+        self.plot.setClipToView(True)
+        self.plot.enableAutoRange("y", True)
         root.addWidget(self.plot, stretch=2)
 
         # persistent bar item (do NOT recreate each render)
-        self._bar = pg.BarGraphItem(x=[], height=[], width=0.8)  # <— added
-        self.plot.addItem(self._bar)  # <— added
-        self._last_keys = None  # <— added
+        self._bar = pg.BarGraphItem(x=[], height=[], width=0.8)
+        self.plot.addItem(self._bar)
+        self._last_keys = None
 
         # --- table ---
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Key", "Miss %", "Hits", "Misses"])
         self.table.horizontalHeader().setStretchLastSection(True)
+
+        # 🔒 Make table completely uneditable
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
         root.addWidget(self.table, stretch=1)
 
         self._render()
@@ -74,7 +78,7 @@ class WeakKeysDialog(QDialog):
     def _render(self):
         # Build data arrays
         keys = [r[0] for r in self._filtered]
-        rates = [int(round(r[1] * 100)) for r in self._filtered]  # 0..100 integers
+        rates = [int(round(r[1] * 100)) for r in self._filtered]
         x = list(range(len(keys)))
 
         # Reuse the existing bar item instead of clearing/recreating
@@ -103,6 +107,6 @@ class WeakKeysDialog(QDialog):
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["Key", "MissPercent", "Hits", "Misses"])
+            w.writerow(["Key", "Miss-Percent", "Hits", "Misses"])
             for k, mr, hits, miss in self._filtered:
                 w.writerow([k, f"{mr*100:.0f}", hits, miss])
