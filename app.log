@@ -42,3 +42,19 @@ Traceback (most recent call last):
     if self.timer.is_paused():
        ^^^^^^^^^^^^^^^^^^^^
 AttributeError: 'RealtimeTimer' object has no attribute 'is_paused'
+2025-11-04 01:40:49,299 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\main.py", line 63, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\main.py", line 56, in main
+    win = MainWindow()
+          ^^^^^^^^^^^^
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\main_window.py", line 40, in __init__
+    self.test.set_text(paragraph_text)
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\test_ui.py", line 224, in set_text
+    self._render_line()
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\OS Project\typemaster os project\ui\test_ui.py", line 412, in _render_line
+    for idx, ch in enumerate(display):
+                             ^^^^^^^
+NameError: name 'display' is not defined

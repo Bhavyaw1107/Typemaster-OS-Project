@@ -1,4 +1,3 @@
-# ui/test_ui.py
 from __future__ import annotations
 from collections import deque
 
@@ -9,28 +8,48 @@ from services.typing_engine import TypingEngine
 from services.weakkeys import WeakKeys
 from core.chrono import RealtimeTimer
 from ui.session_summary import SessionSummary
+from ui.widgets.code_block import CodeBlock
 
 
 def _get(theme, name, default):
     return getattr(theme, name, default)
 
 
+def _looks_like_code(text: str) -> bool:
+    """Detect code by checking for indentation patterns."""
+    if not text:
+        return False
+    lines = text.splitlines()
+    indent_count = 0
+    for ln in lines:
+        if ln.startswith("\t") or ln.startswith("    "):
+            return True
+        stripped = ln.lstrip()
+        if stripped.startswith(("def ", "class ", "function ", "import ", "from ", "const ", "let ", "var ")):
+            if len(lines) > 1:
+                return True
+        if "{" in ln or "}" in ln or "=>" in ln:
+            if len(lines) > 1:
+                return True
+        if len(ln) - len(stripped) >= 2:
+            indent_count += 1
+    if len(lines) >= 3 and indent_count >= max(1, len(lines) // 6):
+        return True
+    return False
+
+
 class TestUI(QWidget):
-    # finished signal used by MainWindow for DB persist
-    finished = Signal(float, float, float, dict)  # wpm, acc%, secs, weakkeys_snapshot
-    # NEW: will emit the normalized first key when autostart is enabled
+    finished = Signal(float, float, float, dict)
     firstKey = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFocusPolicy(Qt.StrongFocus)  # make sure we receive key events
+        self.setFocusPolicy(Qt.StrongFocus)
 
-        # ===== Layout =====
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 30, 0, 30)
         root.setSpacing(28)
 
-        # --- stats row ---
         stats = QHBoxLayout()
         stats.setSpacing(40)
 
@@ -50,21 +69,27 @@ class TestUI(QWidget):
             stats.addWidget(lab)
         root.addLayout(stats)
 
-        # --- typing line (HTML) ---
         self.lblLine = QLabel("", self)
         self.lblLine.setObjectName("lblLine")
         self.lblLine.setTextFormat(Qt.RichText)
         self.lblLine.setWordWrap(True)
         self.lblLine.setAlignment(Qt.AlignCenter)
         self.lblLine.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Monkeytype-like width
         self.lblLine.setMinimumWidth(900)
         self.lblLine.setMaximumWidth(1100)
         self.lblLine.setMinimumHeight(140)
-        root.addWidget(self.lblLine, stretch=1, alignment=Qt.AlignHCenter)
+        self.lblLine.setStyleSheet("font-size: 34px; line-height: 1.35;")
 
-        # ===== Engines / timers =====
+        self.codeBlock = CodeBlock(self, font_size=18)
+        self.codeBlock.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.codeBlock.setMinimumWidth(900)
+        self.codeBlock.setMaximumWidth(1100)
+        self.codeBlock.setMinimumHeight(300)
+        self.codeBlock.setVisible(False)
+
+        root.addWidget(self.lblLine, stretch=1, alignment=Qt.AlignHCenter)
+        root.addWidget(self.codeBlock, stretch=1, alignment=Qt.AlignHCenter)
+
         self.engine = TypingEngine("")
         self.weak = WeakKeys()
 
@@ -76,34 +101,28 @@ class TestUI(QWidget):
         self._ui_tick.timeout.connect(self.refresh_metrics)
         self._ui_tick.start()
 
-        # Caret blink
         self._caret_on = True
         self._caret_timer = QTimer(self)
         self._caret_timer.setInterval(500)
         self._caret_timer.timeout.connect(self._toggle_caret)
         self._caret_timer.start()
 
-        # State
         self._active_seconds = 0.0
         self._running = False
         self._paused = False
         self.current_text: str | None = None
-
-        # Session config
+        self._is_code_mode: bool = False
         self._time_limit: int | None = None
 
-        # Buffers for post-run graph
         self._wpm_time = deque(maxlen=3600)
         self._wpm_vals = deque(maxlen=3600)
 
-        # ===== Viewport tuning =====
         self._approx_chars_per_line = 90
         self._visible_lines = 3
-        self._win_start = 0           # current window start (index in target)
-        self._left_margin = 0.30      # keep caret inside 30%..70% band
+        self._win_start = 0
+        self._left_margin = 0.30
         self._right_margin = 0.70
 
-        # theme cache (updated by set_theme)
         self._colors = {
             "ok": "#22c55e",
             "err": "#ef4444",
@@ -113,20 +132,12 @@ class TestUI(QWidget):
             "err_ul": "rgba(239,68,68,0.9)",
         }
 
-        # Larger font for the whole typing line
-        self.lblLine.setStyleSheet("font-size: 34px; line-height: 1.35;")
-
-        # NEW: autostart flag (MainWindow will enable this)
         self._autostart = False
 
-    # ===== Public API =====
-
     def enable_autostart(self, enabled: bool = True):
-        """Allow the very first key press to start a session via MainWindow."""
         self._autostart = bool(enabled)
 
     def type_programmatically(self, nk: str):
-        """Feed a key into the engine (used to count the first key after autostart)."""
         if not nk:
             return
         before = self.engine.stats.correct_chars
@@ -135,12 +146,68 @@ class TestUI(QWidget):
         self.weak.note(nk, correct_now)
         self._render_line()
 
-    def set_text(self, text: str):
-        self.engine.set_text(text or "")
-        self.current_text = text or ""
-        # reset viewport so we start at the beginning without a jump
+    def set_text(self, text: str, is_code: bool = False):
+        """Set target text."""
+        if not is_code:
+            is_code = _looks_like_code(text)
+        
+        self._is_code_mode = is_code
+        self.engine.target = text
+        self.engine.typed = ""
         self._win_start = 0
-        self._render_line()
+
+        if is_code:
+            try:
+                self.codeBlock.set_code(text)
+                caret_pos = 0
+                self.codeBlock.set_caret(caret_pos, visible=self._caret_on)
+                self.codeBlock.setVisible(True)
+                self.lblLine.setVisible(False)
+            except Exception as e:
+                print(f"CodeBlock error: {e}")
+                self.lblLine.setText(text)
+                self.lblLine.setVisible(True)
+                self.codeBlock.setVisible(False)
+        else:
+            try:
+                self.codeBlock.clear_caret()
+            except Exception:
+                pass
+            self.codeBlock.setVisible(False)
+            self.lblLine.setVisible(True)
+            self._render_line()
+
+    def load_text_file(self, file_path: str):
+        """Load text file preserving formatting."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            if text.endswith("\n\n"):
+                text = text.rstrip("\n") + "\n"
+            is_code = _looks_like_code(text)
+            self.set_text(text, is_code=is_code)
+        except Exception as e:
+            try:
+                self.lblLine.setText(f"Error: {e}")
+                self.lblLine.setVisible(True)
+                self.codeBlock.setVisible(False)
+            except Exception:
+                pass
+
+    @Slot(str)
+    def on_file_selected(self, file_path: str):
+        if not file_path:
+            return
+        if file_path.lower().endswith(".txt"):
+            self.load_text_file(file_path)
+        else:
+            try:
+                self.lblLine.setText("Please select a .txt file.")
+                self.lblLine.setVisible(True)
+                self.codeBlock.setVisible(False)
+            except Exception:
+                pass
 
     def set_theme(self, theme):
         self.setStyleSheet(
@@ -158,6 +225,17 @@ class TestUI(QWidget):
         acc = _get(theme, "accent", "#eab308")
         self._colors["word_bg"] = self._hex_to_rgba(acc, 0.10)
         self._colors["err_ul"] = self._hex_to_rgba(self._colors["err"], 0.9)
+        
+        try:
+            self.codeBlock.set_theme_colors(
+                correct=self._colors["ok"],
+                error=self._colors["err"],
+                untyped=self._colors["mut"],
+                caret=self._colors["caret"]
+            )
+        except Exception:
+            pass
+        
         self._render_line()
 
     def configure_session(self, time_limit=None):
@@ -220,16 +298,12 @@ class TestUI(QWidget):
 
         self._render_line()
 
-    # ===== Internals =====
-
     @Slot(float)
     def on_elapsed_changed(self, secs: float):
         self._active_seconds = secs
         self.lblTimer.setText(f"{secs:0.1f} s")
-
         if self._running and self._time_limit and secs >= float(self._time_limit):
             self.finish_test()
-            return
 
     def refresh_metrics(self):
         wpm = self.engine.wpm(self._active_seconds)
@@ -244,15 +318,27 @@ class TestUI(QWidget):
         if self._running:
             self._render_line()
 
-    # ---- Render with jitter-free viewport ----
     def _render_line(self):
+        """Render with color feedback."""
+        if self._is_code_mode:
+            try:
+                typed = self.engine.typed or ""
+                target = self.engine.target or ""
+                self.codeBlock.set_typing_state(typed, target)
+                caret_pos = len(typed)
+                self.codeBlock.set_caret(caret_pos, visible=self._caret_on)
+            except Exception as e:
+                print(f"Render error: {e}")
+            
+            if self._running and len(self.engine.typed) >= len(self.engine.target):
+                self.finish_test()
+            return
+
         tgt = self.engine.target or ""
         typed = self.engine.typed or ""
-
         window_chars = self._approx_chars_per_line * self._visible_lines
         caret = min(len(typed), len(tgt))
 
-        # Keep a stable window: only move when caret leaves a central band.
         left_band = self._win_start + int(window_chars * self._left_margin)
         right_band = self._win_start + int(window_chars * self._right_margin)
 
@@ -265,14 +351,12 @@ class TestUI(QWidget):
 
         start = self._win_start
         end = min(len(tgt), start + window_chars)
-        
-        # Don't break words at the end - extend to complete the word
+
         if end < len(tgt) and not tgt[end].isspace():
             while end < len(tgt) and not tgt[end].isspace():
                 end += 1
-        
-        display = tgt[start:end]
 
+        display = tgt[start:end]
         typed_rel = max(0, len(typed) - start)
         typed_rel = min(typed_rel, len(display))
 
@@ -283,7 +367,6 @@ class TestUI(QWidget):
         word_bg = self._colors["word_bg"]
         err_ul = self._colors["err_ul"]
 
-        # current word highlight bounds
         w_start = self._find_word_start(tgt, caret)
         w_end = self._find_word_end(tgt, caret)
         w_start_rel = max(0, w_start - start)
@@ -302,7 +385,6 @@ class TestUI(QWidget):
             style = ";".join(style_bits)
             return f'<span style="{style}">{txt}</span>'
 
-        # build spans
         for idx, ch in enumerate(display):
             global_idx = start + idx
             highlight_bg = None
@@ -317,18 +399,15 @@ class TestUI(QWidget):
             else:
                 parts.append(span(ch, col_mut, bg=highlight_bg))
 
-        # caret
         caret_html = (f'<span style="color:{col_caret}">|</span>'
                       if self._caret_on else '<span style="color:transparent">|</span>')
         parts.insert(max(0, min(typed_rel, len(parts))), caret_html)
 
         self.lblLine.setText("".join(parts))
 
-        # finish when text consumed
         if self._running and len(self.engine.typed) >= len(self.engine.target):
             self.finish_test()
 
-    # ===== helpers =====
     def _find_word_start(self, text: str, pos: int) -> int:
         i = max(0, min(pos, len(text)))
         while i > 0 and not text[i - 1].isspace():
@@ -343,7 +422,6 @@ class TestUI(QWidget):
         return i
 
     def _snap_to_prev_space(self, text: str, start: int, limit: int = 40) -> int:
-        """Walk back up to `limit` chars to land on a whitespace; keeps window stable."""
         i = max(0, min(start, len(text)))
         walked = 0
         while i > 0 and walked < limit and not text[i - 1].isspace():
@@ -351,18 +429,13 @@ class TestUI(QWidget):
             walked += 1
         return i
 
-    # ===== Key handling =====
     def keyPressEvent(self, ev):
         nk = self._normalize_key(ev)
         if nk is None:
             return
 
-        # NEW: if not running and autostart is enabled, let MainWindow handle first key
         if not self._running and self._autostart:
-            # Emit firstKey for the main window to begin the session
             self.firstKey.emit(nk)
-            # IMPORTANT: accept the event here so it doesn't propagate to parent widgets
-            # (prevents the top-bar theme/menu from opening on the first key)
             try:
                 ev.accept()
             except Exception:
@@ -370,10 +443,8 @@ class TestUI(QWidget):
             return
 
         if not self._running:
-            # default behavior when not running (no autostart): ignore
             return super().keyPressEvent(ev)
 
-        # Auto-resume on any key press (like Monkeytype)
         if self._paused:
             self.resume_test()
 
@@ -391,18 +462,14 @@ class TestUI(QWidget):
             self.finish_test()
 
     def _normalize_key(self, ev) -> str | None:
-        # allow OS key auto-repeat; only ignore when modifier combos are active
         if ev.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
             return None
-
         key = ev.key()
         t = ev.text()
-
         if key == Qt.Key_Backspace:
             return "<BACKSPACE>"
         if key in (Qt.Key_Return, Qt.Key_Enter):
             return "\n"
-
         if t and (t >= " " or t == "\t"):
             return t
         return None
@@ -435,36 +502,25 @@ class TestUI(QWidget):
         return f"rgba({r},{g},{b},{max(0.0, min(alpha, 1.0))})"
 
     def reset_test(self, new_text: str | None = None):
-        """Hard reset: stop timers, clear stats/buffers, reset viewport and labels."""
         try:
             self.timer.stop()
         except Exception:
             pass
         self._running = False
-
-        # clear session config (e.g., time limit)
         self._time_limit = None
-
-        # engine + text
         self.engine.reset()
         if new_text is not None:
             self.engine.set_text(new_text or "")
             self.current_text = new_text or ""
         else:
             self.engine.set_text(self.current_text or "")
-
-        # ui state
         self._active_seconds = 0.0
         self._paused = False
         self._wpm_time.clear()
         self._wpm_vals.clear()
         self._caret_on = True
-        self._win_start = 0  # reset stable window
-
-        # refresh labels
+        self._win_start = 0
         self.lblTimer.setText("0.0 s")
         self.lblWPM.setText("0.0 WPM")
         self.lblAcc.setText("0.0 %")
-
-        # repaint typing line
         self._render_line()
