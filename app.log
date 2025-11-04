@@ -58,3 +58,27 @@ Traceback (most recent call last):
     for idx, ch in enumerate(display):
                              ^^^^^^^
 NameError: name 'display' is not defined
+2025-11-04 09:35:12,308 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Desktop\typemaster\ui\test_ui.py", line 308, in refresh_metrics
+    def refresh_metrics(self):
+    
+KeyboardInterrupt
+2025-11-04 09:35:12,533 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Desktop\typemaster\core\chrono.py", line 56, in _on_tick
+    def _on_tick(self):
+    
+KeyboardInterrupt
+2025-11-04 09:35:13,228 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Desktop\typemaster\ui\test_ui.py", line 316, in _toggle_caret
+    def _toggle_caret(self):
+    
+KeyboardInterrupt
+2025-11-04 09:35:14,255 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Desktop\typemaster\ui\widgets\code_block.py", line 58, in _blink_caret
+    def _blink_caret(self):
+    
+KeyboardInterrupt
