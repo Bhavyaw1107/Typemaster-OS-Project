@@ -101,12 +101,6 @@ class TestUI(QWidget):
         self._ui_tick.timeout.connect(self.refresh_metrics)
         self._ui_tick.start()
 
-        self._caret_on = True
-        self._caret_timer = QTimer(self)
-        self._caret_timer.setInterval(500)
-        self._caret_timer.timeout.connect(self._toggle_caret)
-        self._caret_timer.start()
-
         self._active_seconds = 0.0
         self._running = False
         self._paused = False
@@ -160,7 +154,7 @@ class TestUI(QWidget):
             try:
                 self.codeBlock.set_code(text)
                 caret_pos = 0
-                self.codeBlock.set_caret(caret_pos, visible=self._caret_on)
+                self.codeBlock.set_caret(caret_pos, visible=True)
                 self.codeBlock.setVisible(True)
                 self.lblLine.setVisible(False)
             except Exception as e:
@@ -251,7 +245,6 @@ class TestUI(QWidget):
         self._wpm_time.clear()
         self._wpm_vals.clear()
         self._active_seconds = 0.0
-        self._caret_on = True
         self._render_line()
         self.timer.start()
         self._running = True
@@ -265,7 +258,6 @@ class TestUI(QWidget):
     def resume_test(self):
         if self._running:
             self.timer.resume()
-            self._caret_on = True
             self._paused = False
 
     def finish_test(self):
@@ -313,11 +305,6 @@ class TestUI(QWidget):
         self._wpm_time.append(self._active_seconds)
         self._wpm_vals.append(wpm)
 
-    def _toggle_caret(self):
-        self._caret_on = not self._caret_on
-        if self._running:
-            self._render_line()
-
     def _render_line(self):
         """Render with color feedback."""
         if self._is_code_mode:
@@ -326,7 +313,7 @@ class TestUI(QWidget):
                 target = self.engine.target or ""
                 self.codeBlock.set_typing_state(typed, target)
                 caret_pos = len(typed)
-                self.codeBlock.set_caret(caret_pos, visible=self._caret_on)
+                self.codeBlock.set_caret(caret_pos, visible=True)
             except Exception as e:
                 print(f"Render error: {e}")
             
@@ -395,12 +382,11 @@ class TestUI(QWidget):
                 if global_idx < len(tgt) and typed[global_idx] == tgt[global_idx]:
                     parts.append(span(ch, col_ok))
                 else:
-                    parts.append(span(ch, col_err, underline=True))
+                    parts.append(span(ch, col_err, underline=False))
             else:
                 parts.append(span(ch, col_mut, bg=highlight_bg))
 
-        caret_html = (f'<span style="color:{col_caret}">|</span>'
-                      if self._caret_on else '<span style="color:transparent">|</span>')
+        caret_html = f'<span style="color:{col_caret}">|</span>'
         parts.insert(max(0, min(typed_rel, len(parts))), caret_html)
 
         self.lblLine.setText("".join(parts))
@@ -430,16 +416,32 @@ class TestUI(QWidget):
         return i
 
     def keyPressEvent(self, ev):
-        nk = self._normalize_key(ev)
+        """Handle ALL keyboard input including shift+keys."""
+        key = ev.key()
+        text = ev.text()
+        modifiers = ev.modifiers()
+        
+        # Ignore Ctrl/Alt/Meta (Shift is OK)
+        if modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            return super().keyPressEvent(ev)
+        
+        nk = None
+        
+        if key == Qt.Key_Backspace:
+            nk = "<BACKSPACE>"
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            nk = "\n"
+        elif key == Qt.Key_Tab:
+            nk = "\t"
+        elif text and len(text) > 0 and ord(text[0]) >= 32:
+            nk = text
+        
         if nk is None:
-            return
+            return super().keyPressEvent(ev)
 
         if not self._running and self._autostart:
             self.firstKey.emit(nk)
-            try:
-                ev.accept()
-            except Exception:
-                pass
+            ev.accept()
             return
 
         if not self._running:
@@ -450,6 +452,7 @@ class TestUI(QWidget):
 
         if nk == "<BACKSPACE>":
             self._backspace()
+            ev.accept()
             return
 
         before = self.engine.stats.correct_chars
@@ -460,19 +463,8 @@ class TestUI(QWidget):
 
         if len(self.engine.typed) >= len(self.engine.target):
             self.finish_test()
-
-    def _normalize_key(self, ev) -> str | None:
-        if ev.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
-            return None
-        key = ev.key()
-        t = ev.text()
-        if key == Qt.Key_Backspace:
-            return "<BACKSPACE>"
-        if key in (Qt.Key_Return, Qt.Key_Enter):
-            return "\n"
-        if t and (t >= " " or t == "\t"):
-            return t
-        return None
+        
+        ev.accept()
 
     def _backspace(self):
         if not self.engine.typed:
@@ -518,7 +510,6 @@ class TestUI(QWidget):
         self._paused = False
         self._wpm_time.clear()
         self._wpm_vals.clear()
-        self._caret_on = True
         self._win_start = 0
         self.lblTimer.setText("0.0 s")
         self.lblWPM.setText("0.0 WPM")

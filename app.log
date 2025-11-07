@@ -1,0 +1,6 @@
+2025-11-07 04:55:59,771 | ERROR | root | Unhandled exception
+Traceback (most recent call last):
+  File "C:\Users\Bhavya Parmar\OneDrive\Documents\Typemaster\ui\widgets\code_block.py", line 161, in keyPressEvent
+    self.parent().handle_key_press(key)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'TestUI' object has no attribute 'handle_key_press'
